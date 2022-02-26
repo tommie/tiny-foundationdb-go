@@ -215,6 +215,11 @@ func TestTransactionGet(t *testing.T) {
 				return nil, err
 			}
 			got = bs
+
+			if want := map[string]taintType{string(wantKey.Pack()): readTaint}; !reflect.DeepEqual(tx.taints, want) {
+				t.Errorf("Get taints: got %+v, want %+v", tx.taints, want)
+			}
+
 			return nil, nil
 		})
 		if err != nil {
@@ -242,6 +247,11 @@ func TestTransactionGet(t *testing.T) {
 				return nil, err
 			}
 			got = bs
+
+			if want := map[string]taintType{}; !reflect.DeepEqual(tx.taints, want) {
+				t.Errorf("Get taints: got %+v, want %+v", tx.taints, want)
+			}
+
 			return nil, nil
 		})
 		if err != nil {

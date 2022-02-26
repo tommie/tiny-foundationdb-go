@@ -130,6 +130,7 @@ func (t *transaction) Get(key KeyConvertible) FutureByteSlice {
 	if found == nil {
 		return &futureByteSlice{}
 	}
+	t.setTaint(found.Key, readTaint)
 	return &futureByteSlice{bs: found.Value}
 }
 
