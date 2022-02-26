@@ -43,6 +43,7 @@ the features that do exist work well sanely.
 [x] `Transaction.ClearRange`
 [x] `Transaction.Get`
 [x] `Transaction.GetRange`
+[ ] `Transaction.GetRange` with `RangeOptions`
 [x] `Transaction.Set`
 [x] Tuple keys and the `tuple` package
 
