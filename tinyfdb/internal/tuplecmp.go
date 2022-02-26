@@ -37,92 +37,86 @@ func compareTuple(a, b TupleElementer) (int, error) {
 func compareTupleElement(a, b TupleElement) (int, error) {
 	switch aa := a.(type) {
 	case TupleElementer:
-		bb, ok := b.(TupleElementer)
-		if !ok {
-			// We already know b isn't a tuple, so there's no
-			// recursion here.
-			return compareTupleElementType(a, b)
+		if bb, ok := b.(TupleElementer); ok {
+			return compareTuple(aa, bb)
 		}
-		return compareTuple(aa, bb)
+		// We already know b isn't a tuple, so there's no
+		// recursion here.
+		return compareTupleElementType(a, b)
 	case nil:
 		if b == nil {
 			return 0, nil
 		}
 		return -1, nil
 	case int:
-		bb, ok := b.(int)
-		if !ok {
-			return compareTupleElementType(a, b)
+		if bb, ok := b.(int); ok {
+			return compareInt64(int64(aa), int64(bb)), nil
 		}
-		if aa < bb {
-			return -1, nil
-		} else if aa > bb {
-			return 1, nil
+		if bb, ok := b.(int64); ok {
+			return compareInt64(int64(aa), bb), nil
 		}
-		return 0, nil
+		return compareTupleElementType(a, b)
 	case int64:
-		bb, ok := b.(int64)
-		if !ok {
-			return compareTupleElementType(a, b)
+		if bb, ok := b.(int); ok {
+			return compareInt64(aa, int64(bb)), nil
 		}
-		if aa < bb {
-			return -1, nil
-		} else if aa > bb {
-			return 1, nil
+		if bb, ok := b.(int64); ok {
+			return compareInt64(aa, bb), nil
 		}
-		return 0, nil
+		return compareTupleElementType(a, b)
 	case uint:
-		bb, ok := b.(uint)
-		if !ok {
-			return compareTupleElementType(a, b)
+		if bb, ok := b.(uint); ok {
+			return compareUint64(uint64(aa), uint64(bb)), nil
 		}
-		if aa < bb {
-			return -1, nil
-		} else if aa > bb {
-			return 1, nil
+		if bb, ok := b.(uint64); ok {
+			return compareUint64(uint64(aa), bb), nil
 		}
-		return 0, nil
+		return compareTupleElementType(a, b)
 	case uint64:
-		bb, ok := b.(uint64)
-		if !ok {
-			return compareTupleElementType(a, b)
+		if bb, ok := b.(uint); ok {
+			return compareUint64(aa, uint64(bb)), nil
 		}
-		if aa < bb {
-			return -1, nil
-		} else if aa > bb {
-			return 1, nil
+		if bb, ok := b.(uint64); ok {
+			return compareUint64(aa, bb), nil
 		}
-		return 0, nil
+		return compareTupleElementType(a, b)
 	case *big.Int:
-		bb, ok := b.(*big.Int)
-		if !ok {
-			return compareTupleElementType(a, b)
+		if bb, ok := b.(*big.Int); ok {
+			return aa.Cmp(bb), nil
 		}
-		return aa.Cmp(bb), nil
+		if bb, ok := b.(big.Int); ok {
+			return aa.Cmp(&bb), nil
+		}
+		return compareTupleElementType(a, b)
 	case big.Int:
-		bb, ok := b.(big.Int)
-		if !ok {
-			return compareTupleElementType(a, b)
+		if bb, ok := b.(*big.Int); ok {
+			return aa.Cmp(bb), nil
 		}
-		return aa.Cmp(&bb), nil
+		if bb, ok := b.(big.Int); ok {
+			return aa.Cmp(&bb), nil
+		}
+		return compareTupleElementType(a, b)
 	case []byte:
-		bb, ok := b.([]byte)
-		if !ok {
-			return compareTupleElementType(a, b)
+		if bb, ok := b.([]byte); ok {
+			return bytes.Compare(aa, bb), nil
 		}
-		return bytes.Compare(aa, bb), nil
+		if bb, ok := b.(KeyConvertible); ok {
+			return bytes.Compare(aa, bb.FDBKey()), nil
+		}
+		return compareTupleElementType(a, b)
 	case KeyConvertible:
-		bb, ok := b.(KeyConvertible)
-		if !ok {
-			return compareTupleElementType(a, b)
+		if bb, ok := b.([]byte); ok {
+			return bytes.Compare(aa.FDBKey(), bb), nil
 		}
-		return bytes.Compare(aa.FDBKey(), bb.FDBKey()), nil
+		if bb, ok := b.(KeyConvertible); ok {
+			return bytes.Compare(aa.FDBKey(), bb.FDBKey()), nil
+		}
+		return compareTupleElementType(a, b)
 	case string:
-		bb, ok := b.(string)
-		if !ok {
-			return compareTupleElementType(a, b)
+		if bb, ok := b.(string); ok {
+			return strings.Compare(aa, bb), nil
 		}
-		return strings.Compare(aa, bb), nil
+		return compareTupleElementType(a, b)
 	case float32:
 		bb, ok := b.(float32)
 		if !ok {
@@ -182,6 +176,24 @@ func compareTupleElement(a, b TupleElement) (int, error) {
 	}
 }
 
+func compareInt64(a, b int64) int {
+	if a < b {
+		return -1
+	} else if a > b {
+		return 1
+	}
+	return 0
+}
+
+func compareUint64(a, b uint64) int {
+	if a < b {
+		return -1
+	} else if a > b {
+		return 1
+	}
+	return 0
+}
+
 // compareTupleElementType gives a comparison-int by looking only at
 // the type of element. This is used when `a` and `b` have different
 // types.
@@ -201,7 +213,10 @@ func compareTupleElementType(a, b TupleElement) (int, error) {
 // elements. This means that all (int, int) tuples come before all
 // (int, int64) tuples and so on.
 //
-// The ordering isn't important, as long as it's strict.
+// The ordering isn't important, as long as types that are
+// indistinguishable in packed form have the same order
+// value. compareTupleElement must be able to compare any combination
+// of types that have the same order value.
 func elementTypeOrder(e TupleElement) (int, error) {
 	switch e.(type) {
 	case TupleElementer:
@@ -211,19 +226,19 @@ func elementTypeOrder(e TupleElement) (int, error) {
 	case int:
 		return 3, nil
 	case int64:
-		return 4, nil
+		return 3, nil
 	case uint:
 		return 5, nil
 	case uint64:
-		return 6, nil
+		return 5, nil
 	case *big.Int:
 		return 7, nil
 	case big.Int:
-		return 8, nil
+		return 7, nil
 	case []byte:
 		return 9, nil
 	case KeyConvertible:
-		return 10, nil
+		return 9, nil
 	case string:
 		return 11, nil
 	case float32:
