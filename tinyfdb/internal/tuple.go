@@ -309,18 +309,18 @@ func (p *packer) encodeVersionstamp(v Versionstamp) {
 	p.putBytes(v.Bytes())
 }
 
-type tupleElementer interface {
+type TupleElementer interface {
 	TupleElements() []TupleElement
 }
 
-func (p *packer) encodeTuple(t tupleElementer, nested bool, versionstamps bool) {
+func (p *packer) encodeTuple(t TupleElementer, nested bool, versionstamps bool) {
 	if nested {
 		p.putByte(nestedCode)
 	}
 
 	for i, ee := range t.TupleElements() {
 		switch e := ee.(type) {
-		case tupleElementer:
+		case TupleElementer:
 			p.encodeTuple(e, true, versionstamps)
 		case nil:
 			p.putByte(nilCode)
