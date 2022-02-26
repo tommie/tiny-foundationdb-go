@@ -18,6 +18,8 @@ type Transaction struct {
 func (t Transaction) Cancel()           { t.transaction.Cancel() }
 func (t Transaction) Commit() FutureNil { return t.transaction.Commit() }
 
+func (t Transaction) Get(key KeyConvertible) FutureByteSlice { return t.transaction.Get(key) }
+
 func (t Transaction) GetRange(r Range, opts RangeOptions) RangeResult {
 	return t.transaction.GetRange(r, opts)
 }
@@ -101,9 +103,40 @@ func (t *transaction) hasWriteTaint(key string) bool {
 	return ok && typ == writeTaint
 }
 
+func (t *transaction) Get(key KeyConvertible) FutureByteSlice {
+	k, err := internal.UnpackTuple(key.FDBKey())
+	if err != nil {
+		return &futureByteSlice{err: err}
+	}
+
+	var found *keyValue
+	var ferr error
+	t.ascend(k, func(kv keyValue) bool {
+		c, err := kv.Key[:len(kv.Key)-1].Cmp(k)
+		if err != nil {
+			ferr = err
+			return false
+		}
+		if c != 0 {
+			return false
+		}
+		found = &kv
+		return true
+	})
+
+	if ferr != nil {
+		return &futureByteSlice{err: ferr}
+	}
+	if found == nil {
+		return &futureByteSlice{}
+	}
+	return &futureByteSlice{bs: found.Value}
+}
+
 func (t *transaction) GetRange(r Range, _ RangeOptions) RangeResult {
 	begin, end := r.FDBRangeKeySelectors()
-	return newRangeResult(t, t.getReadSeq(), begin.FDBKeySelector(), end.FDBKeySelector())
+	t.getReadSeq()
+	return newRangeResult(t, begin.FDBKeySelector(), end.FDBKeySelector())
 }
 
 func (t *transaction) getReadSeq() uint64 {
@@ -120,11 +153,18 @@ func (t *transaction) getReadSeq() uint64 {
 }
 
 func (t *transaction) ascend(pivot internal.Tuple, fun func(keyValue) bool) {
+	seq := t.getReadSeq()
+
 	t.d.mu.Lock()
 	defer t.d.mu.Unlock()
 
 	t.d.bt.Ascend(pivot, func(item interface{}) bool {
-		return fun(item.(keyValue))
+		kv := item.(keyValue)
+		if kv.Key[len(kv.Key)-1].(uint64) > seq {
+			return true
+		}
+
+		return fun(kv)
 	})
 }
 

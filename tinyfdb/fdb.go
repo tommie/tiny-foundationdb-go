@@ -50,6 +50,22 @@ type Future interface {
 	Cancel()
 }
 
+type FutureByteSlice interface {
+	// Get returns a database value (or nil if there is no value), or an error
+	// if the asynchronous operation associated with this future did not
+	// successfully complete. The current goroutine will be blocked until the
+	// future is ready.
+	Get() ([]byte, error)
+
+	// MustGet returns a database value (or nil if there is no value), or panics
+	// if the asynchronous operation associated with this future did not
+	// successfully complete. The current goroutine will be blocked until the
+	// future is ready.
+	MustGet() []byte
+
+	Future
+}
+
 type FutureInt64 interface {
 	// Get returns a database version or an error if the asynchronous operation
 	// associated with this future did not successfully complete. The current

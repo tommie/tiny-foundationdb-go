@@ -23,7 +23,7 @@ func TestRangeResult(t *testing.T) {
 			makeKey(12, 1),
 		},
 	}
-	rr := newRangeResult(&tx, 42, FirstGreaterOrEqual(Key(nil)), FirstGreaterThan(Key((internal.Tuple{[]byte{0xFF}}).Pack())))
+	rr := newRangeResult(&tx, FirstGreaterOrEqual(Key(nil)), FirstGreaterThan(Key((internal.Tuple{[]byte{0xFF}}).Pack())))
 	ri := rr.Iterator()
 
 	var got [][]byte
@@ -63,9 +63,6 @@ func TestRangeIterator(t *testing.T) {
 
 		{"skipBegin", makeKey2(11, 1), makeKey2(0xFF, 0xFF), []internal.Tuple{makeKey(10, 1), makeKey(11, 1), makeKey(12, 1)}, []internal.Tuple{makeKey2(11, 1), makeKey2(12, 1)}},
 		{"skipEnd", nil, makeKey2(11, 0xFF), []internal.Tuple{makeKey(10, 1), makeKey(11, 1), makeKey(12, 1)}, []internal.Tuple{makeKey2(10, 1)}},
-
-		{"seqNoMatch", nil, makeKey2(0xFF, 0xFF), []internal.Tuple{makeKey(10, 20), makeKey(11, 20), makeKey(12, 20)}, nil},
-		{"seqLatest", nil, makeKey2(0xFF, 0xFF), []internal.Tuple{makeKey(10, 4), makeKey(10, 5), makeKey(10, 6)}, []internal.Tuple{makeKey2(10, 5)}},
 	}
 	for _, tst := range tsts {
 		t.Run(tst.Name, func(t *testing.T) {

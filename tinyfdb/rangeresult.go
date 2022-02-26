@@ -17,7 +17,7 @@ type rangeResultTx interface {
 	setTaint(internal.Tuple, taintType)
 }
 
-func newRangeResult(t rangeResultTx, seq uint64, b, e KeySelector) RangeResult {
+func newRangeResult(t rangeResultTx, b, e KeySelector) RangeResult {
 	begin, err := internal.UnpackTuple(b.Key.FDBKey())
 	if err != nil {
 		panic(fmt.Errorf("failed to unpack begin key: %w", err))
@@ -28,8 +28,7 @@ func newRangeResult(t rangeResultTx, seq uint64, b, e KeySelector) RangeResult {
 	}
 
 	return RangeResult{
-		t:   t,
-		seq: seq,
+		t: t,
 		begin: keySelector{
 			Key:     begin,
 			OrEqual: b.OrEqual,
@@ -62,10 +61,6 @@ type RangeIterator struct {
 func (ri *RangeIterator) Advance() bool {
 	var found bool
 	ri.rr.t.ascend(ri.next.sel.Key, func(kv keyValue) bool {
-		if kv.Key[len(kv.Key)-1].(uint64) > ri.rr.seq {
-			return true
-		}
-
 		if ri.end.Match(kv.Key[:len(kv.Key)-1]) != noMatch {
 			return false
 		}

@@ -167,6 +167,93 @@ func TestTransactionSet(t *testing.T) {
 	})
 }
 
+func TestTransactionGet(t *testing.T) {
+	t.Run("empty", func(t *testing.T) {
+		db, err := OpenDefault()
+		if err != nil {
+			t.Fatalf("OpenDefault failed: %v", err)
+		}
+
+		var got []byte
+		_, err = db.Transact(func(tx Transaction) (interface{}, error) {
+			fbs := tx.Get(Key{})
+			bs, err := fbs.Get()
+			if err != nil {
+				return nil, err
+			}
+			got = bs
+			return nil, nil
+		})
+		if err != nil {
+			t.Fatalf("Transact failed: %v", err)
+		}
+
+		var want []byte
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("Get: got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("found", func(t *testing.T) {
+		db, err := OpenDefault()
+		if err != nil {
+			t.Fatalf("OpenDefault failed: %v", err)
+		}
+
+		wantKey := internal.Tuple{"akey", uint64(2)}
+		wantValue := []byte("anewervalue")
+		db.bt.Set(keyValue{internal.Tuple{"akey", uint64(1)}, []byte("avalue")})
+		db.bt.Set(keyValue{wantKey, wantValue})
+		db.bt.Set(keyValue{internal.Tuple{"akey", uint64(3)}, []byte("anewestvalue")})
+		db.prevSeq = 2
+
+		var got []byte
+		_, err = db.Transact(func(tx Transaction) (interface{}, error) {
+			fbs := tx.Get(Key(wantKey[:1].Pack()))
+			bs, err := fbs.Get()
+			if err != nil {
+				return nil, err
+			}
+			got = bs
+			return nil, nil
+		})
+		if err != nil {
+			t.Fatalf("Transact failed: %v", err)
+		}
+
+		if !reflect.DeepEqual(got, wantValue) {
+			t.Errorf("Get: got %v, want %v", got, wantValue)
+		}
+	})
+
+	t.Run("notFound", func(t *testing.T) {
+		db, err := OpenDefault()
+		if err != nil {
+			t.Fatalf("OpenDefault failed: %v", err)
+		}
+
+		db.bt.Set(keyValue{internal.Tuple{"akey", uint64(1)}, []byte("avalue")})
+
+		var got []byte
+		_, err = db.Transact(func(tx Transaction) (interface{}, error) {
+			fbs := tx.Get(Key(internal.Tuple{"anotherkey"}.Pack()))
+			bs, err := fbs.Get()
+			if err != nil {
+				return nil, err
+			}
+			got = bs
+			return nil, nil
+		})
+		if err != nil {
+			t.Fatalf("Transact failed: %v", err)
+		}
+
+		if got != nil {
+			t.Errorf("Get: got %v, want nil", got)
+		}
+	})
+}
+
 func TestTransactionGetRange(t *testing.T) {
 	t.Run("empty", func(t *testing.T) {
 		db, err := OpenDefault()
@@ -266,4 +353,56 @@ func TestTransactionGetRange(t *testing.T) {
 			t.Errorf("GetRange: got %v, want %v", got, want)
 		}
 	})
+}
+
+func TestTransactionAscend(t *testing.T) {
+	makeKey := func(k byte, seq uint64) internal.Tuple {
+		return internal.Tuple{[]byte{k}, seq}
+	}
+	makeKey2 := func(k byte, seq uint64) internal.Tuple {
+		return makeKey(k, seq)[:1]
+	}
+
+	tsts := []struct {
+		Name  string
+		Pivot internal.Tuple
+		Keys  []internal.Tuple
+		Seq   uint64
+
+		WantKeys []internal.Tuple
+	}{
+		{"seqNoMatch", makeKey2(10, 0), []internal.Tuple{makeKey(10, 2)}, 1, nil},
+		{"seqLatest", makeKey2(10, 0), []internal.Tuple{makeKey(10, 1), makeKey(10, 2), makeKey(10, 3)}, 2, []internal.Tuple{makeKey(10, 1), makeKey(10, 2)}},
+		{"seqIsolated", makeKey2(10, 0), []internal.Tuple{makeKey(10, 1), makeKey(10, 2), makeKey(11, 1)}, 2, []internal.Tuple{makeKey(10, 1), makeKey(10, 2), makeKey(11, 1)}},
+	}
+	for _, tst := range tsts {
+		t.Run(tst.Name, func(t *testing.T) {
+			db, err := OpenDefault()
+			if err != nil {
+				t.Fatalf("OpenDefault failed: %v", err)
+			}
+
+			for _, k := range tst.Keys {
+				db.bt.Set(keyValue{k, []byte("anewervalue")})
+			}
+			db.prevSeq = tst.Seq
+
+			var got []internal.Tuple
+			_, err = db.Transact(func(tx Transaction) (interface{}, error) {
+				tx.ascend(tst.Pivot, func(kv keyValue) bool {
+					got = append(got, kv.Key)
+					return true
+				})
+
+				return nil, nil
+			})
+			if err != nil {
+				t.Fatalf("Transact failed: %v", err)
+			}
+
+			if !reflect.DeepEqual(got, tst.WantKeys) {
+				t.Errorf("ascend: got %+v, want %+v", got, tst.WantKeys)
+			}
+		})
+	}
 }
