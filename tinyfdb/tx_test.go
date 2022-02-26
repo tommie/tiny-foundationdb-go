@@ -133,6 +133,43 @@ func TestTransactionCommit(t *testing.T) {
 	})
 }
 
+func TestTransactionClearRange(t *testing.T) {
+	db, err := OpenDefault()
+	if err != nil {
+		t.Fatalf("OpenDefault failed: %v", err)
+	}
+
+	db.bt.Set(keyValue{internal.Tuple{1, uint64(1)}, []byte("value1")})
+	db.bt.Set(keyValue{internal.Tuple{2, uint64(1)}, []byte("value2")})
+	db.bt.Set(keyValue{internal.Tuple{3, uint64(1)}, []byte("value3")})
+	db.prevSeq = 1
+
+	_, err = db.Transact(func(tx Transaction) (interface{}, error) {
+		tx.ClearRange(KeyRange{
+			Key(internal.Tuple{2}.Pack()),
+			Key(internal.Tuple{3}.Pack()),
+		})
+
+		if want := map[string]taintType{string(internal.Tuple{2}.Pack()): writeTaint}; !reflect.DeepEqual(tx.taints, want) {
+			t.Errorf("ClearRange taints: got %+v, want %+v", tx.taints, want)
+		}
+
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatalf("Transact failed: %v", err)
+	}
+
+	db.bt.Ascend(nil, func(item interface{}) bool {
+		t.Logf("Item: %+v", item)
+		return true
+	})
+
+	if got, want := db.bt.Len(), 4; got != want {
+		t.Errorf("Set Len: got %v, want %v", got, want)
+	}
+}
+
 func TestTransactionSet(t *testing.T) {
 	t.Run("overwrites", func(t *testing.T) {
 		db, err := OpenDefault()

@@ -40,6 +40,7 @@ the features that do exist work well sanely.
 [x] `APIVersion` et al.
 [x] `Database.CreateTransaction`
 [x] `Database.Transact`
+[x] `Transaction.ClearRange`
 [x] `Transaction.Get`
 [x] `Transaction.GetRange`
 [x] `Transaction.Set`

@@ -85,7 +85,7 @@ func (t *transaction) Commit() FutureNil {
 	var hint btree.PathHint
 	t.writes.Ascend(nil, func(item interface{}) bool {
 		kv := item.(keyValue)
-		kv.Key = append(kv.Key, t.d.prevSeq)
+		kv.Key = append(append(internal.Tuple{}, kv.Key...), t.d.prevSeq)
 		t.d.bt.SetHint(kv, &hint)
 		return true
 	})
@@ -101,6 +101,34 @@ func (t *transaction) hasWriteTaint(key string) bool {
 
 	typ, ok := t.taints[key]
 	return ok && typ == writeTaint
+}
+
+func (t *transaction) ClearRange(er ExactRange) {
+	b, e := er.FDBRangeKeys()
+
+	bb, err := internal.UnpackTuple(b.FDBKey())
+	if err != nil {
+		return
+	}
+
+	ee, err := internal.UnpackTuple(e.FDBKey())
+	if err != nil {
+		return
+	}
+
+	t.ascend(bb, func(kv keyValue) bool {
+		c, err := kv.Key[:len(kv.Key)-1].Cmp(ee)
+		if err != nil {
+			panic(err)
+		}
+		if c >= 0 {
+			return false
+		}
+		k := kv.Key[:len(kv.Key)-1]
+		t.writes.Set(keyValue{k, nil})
+		t.taints[string(k.Pack())] = writeTaint
+		return true
+	})
 }
 
 func (t *transaction) Get(key KeyConvertible) FutureByteSlice {
