@@ -1,41 +1,45 @@
 package tinyfdb
 
 import (
-	"bytes"
-	"encoding/binary"
 	"fmt"
+
+	"github.com/tommie/tiny-foundationdb-go/tinyfdb/internal"
 )
 
 type RangeResult struct {
 	t          rangeResultTx
-	seqBS      []byte
+	seq        uint64
 	begin, end keySelector
 }
 
 type rangeResultTx interface {
-	ascend([][]byte, func(keyValue) bool)
-	setTaint([][]byte, taintType)
+	ascend(internal.Tuple, func(keyValue) bool)
+	setTaint(internal.Tuple, taintType)
 }
 
 func newRangeResult(t rangeResultTx, seq uint64, b, e KeySelector) RangeResult {
-	seqBS := make([]byte, 8)
-	binary.BigEndian.PutUint64(seqBS, seq)
+	begin, err := internal.UnpackTuple(b.Key.FDBKey())
+	if err != nil {
+		panic(fmt.Errorf("failed to unpack begin key: %w", err))
+	}
+	end, err := internal.UnpackTuple(e.Key.FDBKey())
+	if err != nil {
+		panic(fmt.Errorf("failed to unpack end key: %w", err))
+	}
 
 	return RangeResult{
-		t: t,
+		t:   t,
+		seq: seq,
 		begin: keySelector{
-			// TODO: decode key
-			Key:     [][]byte{[]byte(b.Key.FDBKey())},
+			Key:     begin,
 			OrEqual: b.OrEqual,
 			Offset:  b.Offset,
 		},
 		end: keySelector{
-			// TODO: decode key
-			Key:     [][]byte{[]byte(e.Key.FDBKey())},
+			Key:     end,
 			OrEqual: e.OrEqual,
 			Offset:  e.Offset,
 		},
-		seqBS: seqBS,
 	}
 }
 
@@ -58,7 +62,7 @@ type RangeIterator struct {
 func (ri *RangeIterator) Advance() bool {
 	var found bool
 	ri.rr.t.ascend(ri.next.sel.Key, func(kv keyValue) bool {
-		if bytes.Compare(kv.Key[len(kv.Key)-1], ri.rr.seqBS) > 0 {
+		if kv.Key[len(kv.Key)-1].(uint64) > ri.rr.seq {
 			return true
 		}
 
@@ -84,7 +88,7 @@ func (ri *RangeIterator) Advance() bool {
 		// Add an empty field so we don't look at the same item
 		// again. This is like firstGreaterThan, but is a bit less
 		// verbose in tests.
-		k := make([][]byte, len(ri.kv.Key)+1)
+		k := make(internal.Tuple, len(ri.kv.Key)+1)
 		copy(k, ri.kv.Key)
 		ri.next = keyMatcher{sel: firstGreaterOrEqual(k)}
 		return true
@@ -94,17 +98,16 @@ func (ri *RangeIterator) Advance() bool {
 }
 
 func (ri *RangeIterator) Get() (KeyValue, error) {
-	// TODO: encode key
-	return KeyValue{Key: ri.kv.Key[0], Value: ri.kv.Value}, nil
+	return KeyValue{Key: ri.kv.Key[:len(ri.kv.Key)-1].Pack(), Value: ri.kv.Value}, nil
 }
 
 type keySelector struct {
-	Key     [][]byte
+	Key     internal.Tuple
 	OrEqual bool
 	Offset  int
 }
 
-func firstGreaterOrEqual(key [][]byte) keySelector { return keySelector{key, false, 1} }
+func firstGreaterOrEqual(key internal.Tuple) keySelector { return keySelector{key, false, 1} }
 
 // A keyMatcher is a stateful matcher for a `keySelector`. For many
 // selectors (last-of), this needs a one item look-ahead, which means
@@ -121,7 +124,7 @@ type keyMatcher struct {
 // non-`noMatch`, no more calls to `Match` should be made. If `Match`
 // still hasn't returned a match at the end of the stream of keys,
 // `End` should be called.
-func (m *keyMatcher) Match(k [][]byte) matchResult {
+func (m *keyMatcher) Match(k internal.Tuple) matchResult {
 	var cmp int
 	if btreeBefore(k, m.sel.Key) {
 		// Key is earlier than selector.

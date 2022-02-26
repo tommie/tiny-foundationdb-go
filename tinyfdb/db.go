@@ -1,12 +1,12 @@
 package tinyfdb
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"sync"
 
 	"github.com/tidwall/btree"
+	"github.com/tommie/tiny-foundationdb-go/tinyfdb/internal"
 )
 
 type Database struct {
@@ -62,7 +62,7 @@ type database struct {
 }
 
 type keyValue struct {
-	Key   [][]byte
+	Key   internal.Tuple
 	Value []byte
 }
 
@@ -78,23 +78,15 @@ func btreeBefore(a, b interface{}) bool {
 	aa := toKey(a)
 	bb := toKey(b)
 
-	n := len(aa)
-	if n > len(bb) {
-		n = len(bb)
+	v, err := aa.Cmp(bb)
+	if err != nil {
+		panic(err)
 	}
-
-	for i := 0; i < n; i++ {
-		v := bytes.Compare(aa[i], bb[i])
-		if v != 0 {
-			return v < 0
-		}
-	}
-
-	return len(aa) < len(bb)
+	return v < 0
 }
 
-func toKey(v interface{}) [][]byte {
-	if vv, ok := v.([][]byte); ok {
+func toKey(v interface{}) internal.Tuple {
+	if vv, ok := v.(internal.Tuple); ok {
 		return vv
 	}
 	if kv, ok := v.(keyValue); ok {

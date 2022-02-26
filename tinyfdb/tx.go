@@ -1,11 +1,11 @@
 package tinyfdb
 
 import (
-	"encoding/binary"
 	"fmt"
 	"sync"
 
 	"github.com/tidwall/btree"
+	"github.com/tommie/tiny-foundationdb-go/tinyfdb/internal"
 )
 
 // Transaction is a lightweight handle of a transaction. It is cheap
@@ -80,13 +80,10 @@ func (t *transaction) Commit() FutureNil {
 		panic(fmt.Errorf("tinyfdb/database.prevSeq wrapped around"))
 	}
 
-	seqBS := make([]byte, 8)
-	binary.BigEndian.PutUint64(seqBS, t.d.prevSeq)
-
 	var hint btree.PathHint
 	t.writes.Ascend(nil, func(item interface{}) bool {
 		kv := item.(keyValue)
-		kv.Key = append(kv.Key, seqBS)
+		kv.Key = append(kv.Key, t.d.prevSeq)
 		t.d.bt.SetHint(kv, &hint)
 		return true
 	})
@@ -122,7 +119,7 @@ func (t *transaction) getReadSeq() uint64 {
 	return t.readSeq
 }
 
-func (t *transaction) ascend(pivot [][]byte, fun func(keyValue) bool) {
+func (t *transaction) ascend(pivot internal.Tuple, fun func(keyValue) bool) {
 	t.d.mu.Lock()
 	defer t.d.mu.Unlock()
 
@@ -136,13 +133,15 @@ func (t *transaction) Set(key KeyConvertible, value []byte) {
 	defer t.mu.Unlock()
 
 	t.taints[string(key.FDBKey())] = writeTaint
-	// TODO: encode key
-	t.writes.Set(keyValue{[][]byte{key.FDBKey()}, value})
+	k, err := internal.UnpackTuple(key.FDBKey())
+	if err != nil {
+		panic(err)
+	}
+	t.writes.Set(keyValue{k, value})
 }
 
-func (t *transaction) setTaint(key [][]byte, typ taintType) {
-	// TODO: encode key
-	k := string(key[0])
+func (t *transaction) setTaint(key internal.Tuple, typ taintType) {
+	k := string(key.Pack())
 
 	t.mu.Lock()
 	defer t.mu.Unlock()

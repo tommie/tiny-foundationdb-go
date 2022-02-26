@@ -42,7 +42,7 @@ the features that do exist work well sanely.
 [x] `Database.Transact`
 [x] `Transaction.GetRange`
 [x] `Transaction.Set`
-[ ] Tuple keys
+[x] Tuple keys and the `tuple` package
 
 ### Implementation Notes
 

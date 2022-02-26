@@ -4,6 +4,8 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+
+	"github.com/tommie/tiny-foundationdb-go/tinyfdb/internal"
 )
 
 func TestTransactionCommit(t *testing.T) {
@@ -35,7 +37,7 @@ func TestTransactionCommit(t *testing.T) {
 
 		wantValue := []byte("avalue")
 		_, err = db.Transact(func(tx Transaction) (interface{}, error) {
-			tx.Set(Key("akey"), wantValue)
+			tx.Set(Key(internal.Tuple{"akey"}.Pack()), wantValue)
 			return nil, nil
 		})
 		if err != nil {
@@ -51,7 +53,7 @@ func TestTransactionCommit(t *testing.T) {
 			t.Errorf("Set Len: got %v, want %v", got, want)
 		}
 
-		wantKey := [][]byte{[]byte("akey"), {0, 0, 0, 0, 0, 0, 0, 2}}
+		wantKey := internal.Tuple{"akey", uint64(2)}
 		got := db.bt.Get(wantKey)
 		if !reflect.DeepEqual(got, keyValue{wantKey, wantValue}) {
 			t.Errorf("Set Get: got %v, want %v", got, wantValue)
@@ -65,7 +67,7 @@ func TestTransactionCommit(t *testing.T) {
 		}
 
 		_, err = db.Transact(func(tx Transaction) (interface{}, error) {
-			tx.Set(Key("akey"), []byte("anoldvalue"))
+			tx.Set(Key(internal.Tuple{"akey"}.Pack()), []byte("anoldvalue"))
 			return nil, nil
 		})
 		if err != nil {
@@ -74,7 +76,7 @@ func TestTransactionCommit(t *testing.T) {
 
 		wantValue := []byte("avalue")
 		_, err = db.Transact(func(tx Transaction) (interface{}, error) {
-			tx.Set(Key("akey"), wantValue)
+			tx.Set(Key(internal.Tuple{"akey"}.Pack()), wantValue)
 			return nil, nil
 		})
 		if err != nil {
@@ -90,7 +92,7 @@ func TestTransactionCommit(t *testing.T) {
 			t.Errorf("Set Len: got %v, want %v", got, want)
 		}
 
-		wantKey := [][]byte{[]byte("akey"), {0, 0, 0, 0, 0, 0, 0, 3}}
+		wantKey := internal.Tuple{"akey", uint64(3)}
 		got := db.bt.Get(wantKey)
 		if !reflect.DeepEqual(got, keyValue{wantKey, wantValue}) {
 			t.Errorf("Set Get: got %v, want %v", got, wantValue)
@@ -104,11 +106,11 @@ func TestTransactionCommit(t *testing.T) {
 		}
 
 		_, err = db.Transact(func(tx Transaction) (interface{}, error) {
-			tx.Set(Key("akey"), []byte("avalue"))
+			tx.Set(Key(internal.Tuple{"akey"}.Pack()), []byte("avalue"))
 
 			// This will fail to commit because akey is already tainted.
 			_, err := db.Transact(func(tx Transaction) (interface{}, error) {
-				tx.Set(Key("akey"), []byte("anewervalue"))
+				tx.Set(Key(internal.Tuple{"akey"}.Pack()), []byte("anewervalue"))
 				return nil, nil
 			})
 			if !errors.Is(err, RetryableError{}) {
@@ -140,8 +142,8 @@ func TestTransactionSet(t *testing.T) {
 
 		wantValue := []byte("anewervalue")
 		_, err = db.Transact(func(tx Transaction) (interface{}, error) {
-			tx.Set(Key("akey"), []byte("avalue"))
-			tx.Set(Key("akey"), wantValue)
+			tx.Set(Key(internal.Tuple{"akey"}.Pack()), []byte("avalue"))
+			tx.Set(Key(internal.Tuple{"akey"}.Pack()), wantValue)
 			return nil, nil
 		})
 		if err != nil {
@@ -157,7 +159,7 @@ func TestTransactionSet(t *testing.T) {
 			t.Errorf("Set Len: got %v, want %v", got, want)
 		}
 
-		wantKey := [][]byte{[]byte("akey"), {0, 0, 0, 0, 0, 0, 0, 2}}
+		wantKey := internal.Tuple{"akey", uint64(2)}
 		got := db.bt.Get(wantKey)
 		if !reflect.DeepEqual(got, keyValue{wantKey, wantValue}) {
 			t.Errorf("Set Get: got %v, want %v", got, wantValue)
@@ -174,7 +176,7 @@ func TestTransactionGetRange(t *testing.T) {
 
 		var got []KeyValue
 		_, err = db.Transact(func(tx Transaction) (interface{}, error) {
-			ri := tx.GetRange(KeyRange{Key{}, Key{0xFF}}, RangeOptions{}).Iterator()
+			ri := tx.GetRange(KeyRange{Key{}, Key(internal.Tuple{[]byte{0xFF}}.Pack())}, RangeOptions{}).Iterator()
 			for ri.Advance() {
 				kv, err := ri.Get()
 				if err != nil {
@@ -201,14 +203,14 @@ func TestTransactionGetRange(t *testing.T) {
 			t.Fatalf("OpenDefault failed: %v", err)
 		}
 
-		wantKey := [][]byte{[]byte("akey"), {0, 0, 0, 0, 0, 0, 0, 2}}
+		wantKey := internal.Tuple{"akey", uint64(2)}
 		wantValue := []byte("anewervalue")
 		db.bt.Set(keyValue{wantKey, wantValue})
 		db.prevSeq = 2
 
 		var got []KeyValue
 		_, err = db.Transact(func(tx Transaction) (interface{}, error) {
-			ri := tx.GetRange(KeyRange{Key{}, Key{0xFF}}, RangeOptions{}).Iterator()
+			ri := tx.GetRange(KeyRange{Key{}, Key(internal.Tuple{"\xFF"}.Pack())}, RangeOptions{}).Iterator()
 			for ri.Advance() {
 				kv, err := ri.Get()
 				if err != nil {
@@ -224,8 +226,42 @@ func TestTransactionGetRange(t *testing.T) {
 		}
 
 		want := []KeyValue{
-			{wantKey[0], wantValue},
+			{wantKey[:1].Pack(), wantValue},
 		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("GetRange: got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("differentTypes", func(t *testing.T) {
+		db, err := OpenDefault()
+		if err != nil {
+			t.Fatalf("OpenDefault failed: %v", err)
+		}
+
+		db.bt.Set(keyValue{internal.Tuple{"akey", uint64(2)}, []byte("anewervalue")})
+		db.prevSeq = 2
+
+		var got []KeyValue
+		_, err = db.Transact(func(tx Transaction) (interface{}, error) {
+			// The key in the BTree is a string, but we use an int
+			// range here.
+			ri := tx.GetRange(KeyRange{Key(internal.Tuple{42}.Pack()), Key(internal.Tuple{43}.Pack())}, RangeOptions{}).Iterator()
+			for ri.Advance() {
+				kv, err := ri.Get()
+				if err != nil {
+					return nil, err
+				}
+				got = append(got, kv)
+			}
+
+			return nil, nil
+		})
+		if err != nil {
+			t.Fatalf("Transact failed: %v", err)
+		}
+
+		var want []KeyValue
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("GetRange: got %v, want %v", got, want)
 		}
