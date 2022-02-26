@@ -37,10 +37,12 @@ This is far from a complete implementation of the API. The idea was/is
 to implement features as and when they are needed, but ensuring that
 the features that do exist work well sanely.
 
+[x] `APIVersion` et al.
 [x] `Database.CreateTransaction`
 [x] `Database.Transact`
 [x] `Transaction.GetRange`
 [x] `Transaction.Set`
+[ ] Tuple keys
 
 ### Implementation Notes
 
