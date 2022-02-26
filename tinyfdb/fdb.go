@@ -16,6 +16,8 @@
  */
 package tinyfdb
 
+import "github.com/tommie/tiny-foundationdb-go/tinyfdb/internal"
+
 type ExactRange interface {
 	// FDBRangeKeys returns a pair of keys that describe the beginning and end
 	// of a range.
@@ -76,13 +78,9 @@ type FutureNil interface {
 	Future
 }
 
-type Key []byte
+type Key = internal.Key
 
-func (k Key) FDBKey() Key { return k }
-
-type KeyConvertible interface {
-	FDBKey() Key
-}
+type KeyConvertible = internal.KeyConvertible
 
 type KeyRange struct {
 	// The (inclusive) beginning of the range
