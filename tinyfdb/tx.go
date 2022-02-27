@@ -63,6 +63,9 @@ func (t *transaction) Commit() FutureNil {
 		return &futureNil{}
 	}
 
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
 	t.d.mu.Lock()
 	defer t.d.mu.Unlock()
 
@@ -71,7 +74,7 @@ func (t *transaction) Commit() FutureNil {
 			if t2 == t {
 				continue
 			}
-			if t2.hasWriteTaint(key) {
+			if t2.hasWriteTaintLocked(key) {
 				return &futureNil{err: RetryableError{fmt.Errorf("write race with transaction %p", t2)}}
 			}
 		}
@@ -95,10 +98,7 @@ func (t *transaction) Commit() FutureNil {
 	return &futureNil{}
 }
 
-func (t *transaction) hasWriteTaint(key string) bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
+func (t *transaction) hasWriteTaintLocked(key string) bool {
 	typ, ok := t.taints[key]
 	return ok && typ == writeTaint
 }
