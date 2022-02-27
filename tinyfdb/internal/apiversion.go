@@ -8,7 +8,7 @@ import (
 var apiVersion int32
 
 func APIVersion(version int) error {
-	if version < 200 || version > 710 {
+	if version < 200 || version >= 300 {
 		return fmt.Errorf("version not supported: %d", version)
 	}
 	if !atomic.CompareAndSwapInt32(&apiVersion, 0, int32(version)) {

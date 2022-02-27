@@ -16,7 +16,7 @@ func TestAPIVersion(t *testing.T) {
 	t.Run("setAndIs", func(t *testing.T) {
 		t.Cleanup(internal.ClearAPIVersion)
 
-		want := 700
+		want := 200
 		if err := APIVersion(want); err != nil {
 			t.Fatalf("APIVersion failed: %v", err)
 		}

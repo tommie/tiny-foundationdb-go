@@ -15,7 +15,7 @@ func TestAPIVersion(t *testing.T) {
 			apiVersion = 0
 		})
 
-		want := 700
+		want := 200
 		if err := APIVersion(want); err != nil {
 			t.Fatalf("APIVersion failed: %v", err)
 		}
@@ -35,12 +35,12 @@ func TestAPIVersion(t *testing.T) {
 			apiVersion = 0
 		})
 
-		if err := APIVersion(700); err != nil {
+		if err := APIVersion(200); err != nil {
 			t.Fatalf("APIVersion failed: %v", err)
 		}
 
-		if err := APIVersion(701); err == nil {
-			t.Fatalf("APIVersion(701) err: got %v, want non-nil", err)
+		if err := APIVersion(201); err == nil {
+			t.Fatalf("APIVersion(201) err: got %v, want non-nil", err)
 		}
 	})
 }
