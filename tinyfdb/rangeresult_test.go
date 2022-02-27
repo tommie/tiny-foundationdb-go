@@ -1,6 +1,7 @@
 package tinyfdb
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -59,10 +60,13 @@ func TestRangeIterator(t *testing.T) {
 		WantKeys []internal.Tuple
 	}{
 		{"empty", nil, nil, nil, nil},
-		{"all", nil, makeKey2(0xFF, 0xFF), []internal.Tuple{makeKey(10, 1), makeKey(11, 1), makeKey(12, 1)}, []internal.Tuple{makeKey2(10, 1), makeKey2(11, 1), makeKey2(12, 1)}},
+		{"all", nil, makeKey2(0xFF, 0xFF), []internal.Tuple{makeKey(10, 1), makeKey(11, 1), makeKey(12, 1)}, []internal.Tuple{makeKey(10, 1), makeKey(11, 1), makeKey(12, 1)}},
 
-		{"skipBegin", makeKey2(11, 1), makeKey2(0xFF, 0xFF), []internal.Tuple{makeKey(10, 1), makeKey(11, 1), makeKey(12, 1)}, []internal.Tuple{makeKey2(11, 1), makeKey2(12, 1)}},
-		{"skipEnd", nil, makeKey2(11, 0xFF), []internal.Tuple{makeKey(10, 1), makeKey(11, 1), makeKey(12, 1)}, []internal.Tuple{makeKey2(10, 1)}},
+		{"skipBegin", makeKey2(11, 1), makeKey2(0xFF, 0xFF), []internal.Tuple{makeKey(10, 1), makeKey(11, 1), makeKey(12, 1)}, []internal.Tuple{makeKey(11, 1), makeKey(12, 1)}},
+		{"skipEnd", nil, makeKey2(11, 0xFF), []internal.Tuple{makeKey(10, 1), makeKey(11, 1), makeKey(12, 1)}, []internal.Tuple{makeKey(10, 1)}},
+
+		{"lastSeq", nil, makeKey2(0xFF, 0xFF), []internal.Tuple{makeKey(10, 1), makeKey(10, 2), makeKey(11, 1)}, []internal.Tuple{makeKey(10, 2), makeKey(11, 1)}},
+		{"lastSeqEnd", nil, makeKey2(0xFF, 0xFF), []internal.Tuple{makeKey(10, 1), makeKey(10, 2)}, []internal.Tuple{makeKey(10, 2)}},
 	}
 	for _, tst := range tsts {
 		t.Run(tst.Name, func(t *testing.T) {
@@ -78,22 +82,24 @@ func TestRangeIterator(t *testing.T) {
 				end:  keyMatcher{sel: firstGreaterOrEqual(tst.End)},
 			}
 
-			var got [][]byte
+			var gotValues []string
 			for ri.Advance() {
 				kv, _ := ri.Get()
-				got = append(got, kv.Key)
+				gotValues = append(gotValues, string(kv.Value))
 			}
 
-			var want [][]byte
+			var wantValues []string
+			var wantTaints []internal.Tuple
 			for _, k := range tst.WantKeys {
-				want = append(want, k.Pack())
+				wantValues = append(wantValues, fmt.Sprint(k))
+				wantTaints = append(wantTaints, k[:len(k)-1])
 			}
-			if !reflect.DeepEqual(got, want) {
-				t.Errorf("Advance: got %+v, want %+v", got, want)
+			if !reflect.DeepEqual(gotValues, wantValues) {
+				t.Errorf("Advance: got %+v, want %+v", gotValues, wantValues)
 			}
 
-			if !reflect.DeepEqual(tx.GotTaint, tst.WantKeys) {
-				t.Errorf("Advance GotTaint: got %+v, want %+v", tx.GotTaint, tst.WantKeys)
+			if !reflect.DeepEqual(tx.GotTaint, wantTaints) {
+				t.Errorf("Advance GotTaint: got %+v, want %+v", tx.GotTaint, wantTaints)
 			}
 		})
 	}
@@ -110,7 +116,7 @@ func (t *fakeRangeResultTransaction) ascend(pivot internal.Tuple, fun func(keyVa
 	if t.bt == nil {
 		t.bt = btree.NewNonConcurrent(btreeBefore)
 		for _, key := range t.Keys {
-			t.bt.Set(keyValue{key, []byte("value")})
+			t.bt.Set(keyValue{key, []byte(fmt.Sprint(key))})
 		}
 	}
 
