@@ -141,13 +141,14 @@ func TestTransactionClearRange(t *testing.T) {
 
 	db.bt.Set(keyValue{internal.Tuple{1, uint64(1)}, []byte("value1")})
 	db.bt.Set(keyValue{internal.Tuple{2, uint64(1)}, []byte("value2")})
-	db.bt.Set(keyValue{internal.Tuple{3, uint64(1)}, []byte("value3")})
+	db.bt.Set(keyValue{internal.Tuple{3, uint64(1)}, nil}) // A tombstone.
+	db.bt.Set(keyValue{internal.Tuple{4, uint64(1)}, []byte("value3")})
 	db.prevSeq = 1
 
 	_, err = db.Transact(func(tx Transaction) (interface{}, error) {
 		tx.ClearRange(KeyRange{
 			Key(internal.Tuple{2}.Pack()),
-			Key(internal.Tuple{3}.Pack()),
+			Key(internal.Tuple{4}.Pack()),
 		})
 
 		if want := map[string]taintType{string(internal.Tuple{2}.Pack()): writeTaint}; !reflect.DeepEqual(tx.taints, want) {
@@ -165,7 +166,7 @@ func TestTransactionClearRange(t *testing.T) {
 		return true
 	})
 
-	if got, want := db.bt.Len(), 4; got != want {
+	if got, want := db.bt.Len(), 5; got != want {
 		t.Errorf("Set Len: got %v, want %v", got, want)
 	}
 }

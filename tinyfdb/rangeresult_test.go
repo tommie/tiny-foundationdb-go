@@ -103,10 +103,60 @@ func TestRangeIterator(t *testing.T) {
 			}
 		})
 	}
+
+	tsts2 := []struct {
+		Name   string
+		Begin  internal.Tuple
+		End    internal.Tuple
+		Keys   []internal.Tuple
+		Values [][]byte
+
+		WantKeys []internal.Tuple
+	}{
+		{"earlierTombstone", nil, makeKey2(0xFF, 0xFF), []internal.Tuple{makeKey(10, 1), makeKey(10, 2)}, [][]byte{nil, []byte(fmt.Sprint(makeKey(10, 2)))}, []internal.Tuple{makeKey(10, 2)}},
+		{"latestTombstone", nil, makeKey2(0xFF, 0xFF), []internal.Tuple{makeKey(10, 1), makeKey(10, 2), makeKey(11, 1)}, [][]byte{{42}, nil, []byte(fmt.Sprint(makeKey(11, 1)))}, []internal.Tuple{makeKey(11, 1)}},
+	}
+	for _, tst := range tsts2 {
+		t.Run(tst.Name, func(t *testing.T) {
+			tx := fakeRangeResultTransaction{
+				Keys:  tst.Keys,
+				Value: func(i int) []byte { return tst.Values[i] },
+			}
+			ri := RangeIterator{
+				rr: RangeResult{
+					t:   &tx,
+					seq: 5,
+				},
+				next: keyMatcher{sel: firstGreaterOrEqual(tst.Begin)},
+				end:  keyMatcher{sel: firstGreaterOrEqual(tst.End)},
+			}
+
+			var gotValues []string
+			for ri.Advance() {
+				kv, _ := ri.Get()
+				gotValues = append(gotValues, string(kv.Value))
+			}
+
+			var wantValues []string
+			var wantTaints []internal.Tuple
+			for _, k := range tst.WantKeys {
+				wantValues = append(wantValues, fmt.Sprint(k))
+				wantTaints = append(wantTaints, k[:len(k)-1])
+			}
+			if !reflect.DeepEqual(gotValues, wantValues) {
+				t.Errorf("Advance: got %+v, want %+v", gotValues, wantValues)
+			}
+
+			if !reflect.DeepEqual(tx.GotTaint, wantTaints) {
+				t.Errorf("Advance GotTaint: got %+v, want %+v", tx.GotTaint, wantTaints)
+			}
+		})
+	}
 }
 
 type fakeRangeResultTransaction struct {
 	Keys     []internal.Tuple
+	Value    func(int) []byte
 	GotTaint []internal.Tuple
 
 	bt *btree.BTree
@@ -115,8 +165,12 @@ type fakeRangeResultTransaction struct {
 func (t *fakeRangeResultTransaction) ascend(pivot internal.Tuple, fun func(keyValue) bool) {
 	if t.bt == nil {
 		t.bt = btree.NewNonConcurrent(btreeBefore)
-		for _, key := range t.Keys {
-			t.bt.Set(keyValue{key, []byte(fmt.Sprint(key))})
+		for i, key := range t.Keys {
+			v := []byte(fmt.Sprint(key))
+			if t.Value != nil {
+				v = t.Value(i)
+			}
+			t.bt.Set(keyValue{key, v})
 		}
 	}
 

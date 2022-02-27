@@ -125,8 +125,15 @@ func (t *transaction) ClearRange(er ExactRange) {
 			return false
 		}
 		k := kv.Key[:len(kv.Key)-1]
-		t.writes.Set(keyValue{k, nil})
-		t.taints[string(k.Pack())] = writeTaint
+		if kv.Value != nil {
+			t.writes.Set(keyValue{k, nil})
+			t.taints[string(k.Pack())] = writeTaint
+		} else {
+			// A tombstone means we shouldn't taint this. We may have
+			// done so on earlier versions already.
+			t.writes.Delete(keyValue{k, nil})
+			delete(t.taints, string(k.Pack()))
+		}
 		return true
 	})
 }

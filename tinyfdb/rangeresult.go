@@ -60,60 +60,68 @@ type RangeIterator struct {
 }
 
 func (ri *RangeIterator) Advance() bool {
-	var prev, found *keyValue
-	ri.rr.t.ascend(ri.next.sel.Key, func(kv keyValue) bool {
-		if ri.end.Match(kv.Key[:len(kv.Key)-1]) != noMatch {
-			return false
+	for {
+		var prev, found *keyValue
+		ri.rr.t.ascend(ri.next.sel.Key, func(kv keyValue) bool {
+			if ri.end.Match(kv.Key[:len(kv.Key)-1]) != noMatch {
+				return false
+			}
+
+			if found != nil {
+				c, err := found.Key[:len(found.Key)-1].Cmp(kv.Key[:len(kv.Key)-1])
+				if err != nil {
+					panic(err)
+				}
+				if c != 0 {
+					// The next item is a different key, so we've found
+					// the highest sequence number.
+					return false
+				}
+			}
+
+			switch ri.next.Match(kv.Key[:len(kv.Key)-1]) {
+			case noMatch:
+				prev = &kv
+				return true
+
+			case matchPrev:
+				found = prev
+
+			case matchCurrent:
+				found = &kv
+			}
+
+			// We must find the last sequence number for this key, so
+			// carry on searching.
+			return true
+		})
+
+		if found == nil && ri.next.End() == matchPrev {
+			found = prev
 		}
 
 		if found != nil {
-			c, err := found.Key[:len(found.Key)-1].Cmp(kv.Key[:len(kv.Key)-1])
-			if err != nil {
-				panic(err)
-			}
-			if c != 0 {
-				// The next item is a different key, so we've found
-				// the highest sequence number.
-				return false
-			}
-		}
+			// Set the seq to max and add an empty field so we don't look
+			// at the same item again. This is like
+			// firstGreaterThan(found.Key[:-1]), but is a bit less verbose
+			// in tests.
+			k := make(internal.Tuple, len(found.Key)+1)
+			copy(k, found.Key)
+			k[len(k)-1] = uint64(math.MaxUint64)
+			ri.next = keyMatcher{sel: firstGreaterOrEqual(k)}
 
-		switch ri.next.Match(kv.Key[:len(kv.Key)-1]) {
-		case noMatch:
-			prev = &kv
+			if found.Value == nil {
+				// A tombstone.
+				continue
+			}
+
+			ri.rr.t.setTaint(found.Key[:len(found.Key)-1], readTaint)
+			ri.kv = *found
 			return true
-
-		case matchPrev:
-			found = prev
-
-		case matchCurrent:
-			found = &kv
 		}
 
-		// We must find the last sequence number for this key, so
-		// carry on searching.
-		return true
-	})
-
-	if found == nil && ri.next.End() == matchPrev {
-		found = prev
+		return false
 	}
-
-	if found != nil {
-		// Set the seq to max and add an empty field so we don't look
-		// at the same item again. This is like
-		// firstGreaterThan(found.Key[:-1]), but is a bit less verbose
-		// in tests.
-		k := make(internal.Tuple, len(found.Key)+1)
-		copy(k, found.Key)
-		k[len(k)-1] = uint64(math.MaxUint64)
-		ri.next = keyMatcher{sel: firstGreaterOrEqual(k)}
-		ri.rr.t.setTaint(found.Key[:len(found.Key)-1], readTaint)
-		ri.kv = *found
-		return true
-	}
-
-	return false
 }
 
 func (ri *RangeIterator) Get() (KeyValue, error) {
