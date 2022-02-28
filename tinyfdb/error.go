@@ -1,7 +1,8 @@
 package tinyfdb
 
-import "errors"
-
+// A RetryableError is a wrapper for an error the database code
+// considers temporary. Usually a conflicting transaction, which means
+// that retrying will likely succeed.
 type RetryableError struct {
 	Err error
 }
@@ -11,12 +12,8 @@ func (e RetryableError) Error() string {
 }
 
 func (e RetryableError) Is(err error) bool {
-	eerr, ok := err.(RetryableError)
-	if !ok {
-		return false
-	}
-
-	return eerr.Err == nil || errors.Is(e.Err, eerr.Err)
+	_, ok := err.(RetryableError)
+	return ok
 }
 
 func (e RetryableError) Unwrap() error {
