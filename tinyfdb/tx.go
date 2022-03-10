@@ -30,7 +30,7 @@ type transaction struct {
 	d *database
 
 	mu      sync.Mutex
-	taints  map[string]taintType
+	taints  map[string]taintType // Mutex: d.mu
 	writes  *btree.BTree
 	readSeq uint64
 }
@@ -58,13 +58,13 @@ func (t *transaction) Cancel() {
 }
 
 func (t *transaction) Commit() FutureNil {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
 	if t.writes.Len() == 0 {
 		t.Cancel()
 		return &futureNil{}
 	}
-
-	t.mu.Lock()
-	defer t.mu.Unlock()
 
 	t.d.mu.Lock()
 	defer t.d.mu.Unlock()
@@ -74,9 +74,7 @@ func (t *transaction) Commit() FutureNil {
 			if t2 == t {
 				continue
 			}
-			t2.mu.Lock()
 			ok := t2.hasWriteTaintLocked(key)
-			t2.mu.Unlock()
 			if ok {
 				return &futureNil{err: RetryableError{fmt.Errorf("write race with transaction %p", t2)}}
 			}
@@ -101,6 +99,8 @@ func (t *transaction) Commit() FutureNil {
 	return &futureNil{}
 }
 
+// hasWriteTaintLocked checks if the transaction has written to
+// key. t.d.mu must be locked.
 func (t *transaction) hasWriteTaintLocked(key string) bool {
 	typ, ok := t.taints[key]
 	return ok && typ == writeTaint
@@ -120,6 +120,8 @@ func (t *transaction) ClearRange(er ExactRange) {
 	}
 
 	t.ascend(bb, func(kv keyValue) bool {
+		// t.d.mu already locked.
+
 		c, err := kv.Key[:len(kv.Key)-1].Cmp(ee)
 		if err != nil {
 			panic(err)
@@ -208,10 +210,10 @@ func (t *transaction) ascend(pivot internal.Tuple, fun func(keyValue) bool) {
 }
 
 func (t *transaction) Set(key KeyConvertible, value []byte) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
+	t.d.mu.Lock()
 	t.taints[string(key.FDBKey())] = writeTaint
+	t.d.mu.Unlock()
+
 	k, err := internal.UnpackTuple(key.FDBKey())
 	if err != nil {
 		panic(err)
@@ -222,8 +224,8 @@ func (t *transaction) Set(key KeyConvertible, value []byte) {
 func (t *transaction) setTaint(key internal.Tuple, typ taintType) {
 	k := string(key.Pack())
 
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.d.mu.Lock()
+	defer t.d.mu.Unlock()
 
 	// Allow upgrading readTaint to writeTaint, but no downgrade.
 	if _, ok := t.taints[k]; !ok || typ == writeTaint {
