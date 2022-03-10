@@ -74,7 +74,10 @@ func (t *transaction) Commit() FutureNil {
 			if t2 == t {
 				continue
 			}
-			if t2.hasWriteTaintLocked(key) {
+			t2.mu.Lock()
+			ok := t2.hasWriteTaintLocked(key)
+			t2.mu.Unlock()
+			if ok {
 				return &futureNil{err: RetryableError{fmt.Errorf("write race with transaction %p", t2)}}
 			}
 		}
