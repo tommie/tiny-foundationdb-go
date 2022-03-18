@@ -24,7 +24,7 @@ func TestRangeResult(t *testing.T) {
 			makeKey(12, 1),
 		},
 	}
-	rr := newRangeResult(&tx, FirstGreaterOrEqual(Key(nil)), FirstGreaterThan(Key((internal.Tuple{[]byte{0xFF}}).Pack())))
+	rr := newRangeResult(&tx, FirstGreaterOrEqual(Key(nil)), FirstGreaterThan(Key((internal.Tuple{[]byte{0xFF}}).Pack())), RangeOptions{})
 	ri := rr.Iterator()
 
 	var got [][]byte
@@ -56,17 +56,21 @@ func TestRangeIterator(t *testing.T) {
 		Begin internal.Tuple
 		End   internal.Tuple
 		Keys  []internal.Tuple
+		Opts  RangeOptions
 
 		WantKeys []internal.Tuple
 	}{
-		{"empty", nil, nil, nil, nil},
-		{"all", nil, makeKey2(0xFF, 0xFF), []internal.Tuple{makeKey(10, 1), makeKey(11, 1), makeKey(12, 1)}, []internal.Tuple{makeKey(10, 1), makeKey(11, 1), makeKey(12, 1)}},
+		{"empty", nil, nil, nil, RangeOptions{}, nil},
+		{"all", nil, makeKey2(0xFF, 0xFF), []internal.Tuple{makeKey(10, 1), makeKey(11, 1), makeKey(12, 1)}, RangeOptions{}, []internal.Tuple{makeKey(10, 1), makeKey(11, 1), makeKey(12, 1)}},
 
-		{"skipBegin", makeKey2(11, 1), makeKey2(0xFF, 0xFF), []internal.Tuple{makeKey(10, 1), makeKey(11, 1), makeKey(12, 1)}, []internal.Tuple{makeKey(11, 1), makeKey(12, 1)}},
-		{"skipEnd", nil, makeKey2(11, 0xFF), []internal.Tuple{makeKey(10, 1), makeKey(11, 1), makeKey(12, 1)}, []internal.Tuple{makeKey(10, 1)}},
+		{"skipBegin", makeKey2(11, 1), makeKey2(0xFF, 0xFF), []internal.Tuple{makeKey(10, 1), makeKey(11, 1), makeKey(12, 1)}, RangeOptions{}, []internal.Tuple{makeKey(11, 1), makeKey(12, 1)}},
+		{"skipEnd", nil, makeKey2(11, 0xFF), []internal.Tuple{makeKey(10, 1), makeKey(11, 1), makeKey(12, 1)}, RangeOptions{}, []internal.Tuple{makeKey(10, 1)}},
 
-		{"lastSeq", nil, makeKey2(0xFF, 0xFF), []internal.Tuple{makeKey(10, 1), makeKey(10, 2), makeKey(11, 1)}, []internal.Tuple{makeKey(10, 2), makeKey(11, 1)}},
-		{"lastSeqEnd", nil, makeKey2(0xFF, 0xFF), []internal.Tuple{makeKey(10, 1), makeKey(10, 2)}, []internal.Tuple{makeKey(10, 2)}},
+		{"lastSeq", nil, makeKey2(0xFF, 0xFF), []internal.Tuple{makeKey(10, 1), makeKey(10, 2), makeKey(11, 1)}, RangeOptions{}, []internal.Tuple{makeKey(10, 2), makeKey(11, 1)}},
+		{"lastSeqEnd", nil, makeKey2(0xFF, 0xFF), []internal.Tuple{makeKey(10, 1), makeKey(10, 2)}, RangeOptions{}, []internal.Tuple{makeKey(10, 2)}},
+
+		{"reverse", nil, makeKey2(0xFF, 0xFF), []internal.Tuple{makeKey(10, 1), makeKey(11, 1), makeKey(12, 1)}, RangeOptions{Reverse: true}, []internal.Tuple{makeKey(12, 1), makeKey(11, 1), makeKey(10, 1)}},
+		{"limit", nil, makeKey2(0xFF, 0xFF), []internal.Tuple{makeKey(10, 1), makeKey(11, 1), makeKey(12, 1)}, RangeOptions{Limit: 1}, []internal.Tuple{makeKey(10, 1)}},
 	}
 	for _, tst := range tsts {
 		t.Run(tst.Name, func(t *testing.T) {
@@ -75,11 +79,17 @@ func TestRangeIterator(t *testing.T) {
 			}
 			ri := RangeIterator{
 				rr: RangeResult{
-					t:   &tx,
-					seq: 5,
+					t:    &tx,
+					opts: tst.Opts,
+					seq:  5,
 				},
-				next: keyMatcher{sel: firstGreaterOrEqual(tst.Begin)},
-				end:  keyMatcher{sel: firstGreaterOrEqual(tst.End)},
+				next:   keyMatcher{sel: firstGreaterOrEqual(tst.Begin), inverse: tst.Opts.Reverse},
+				end:    keyMatcher{sel: firstGreaterOrEqual(tst.End), inverse: tst.Opts.Reverse},
+				scendf: tx.ascend,
+			}
+			if tst.Opts.Reverse {
+				ri.next, ri.end = ri.end, ri.next
+				ri.scendf = tx.descend
 			}
 
 			var gotValues []string
@@ -127,8 +137,9 @@ func TestRangeIterator(t *testing.T) {
 					t:   &tx,
 					seq: 5,
 				},
-				next: keyMatcher{sel: firstGreaterOrEqual(tst.Begin)},
-				end:  keyMatcher{sel: firstGreaterOrEqual(tst.End)},
+				next:   keyMatcher{sel: firstGreaterOrEqual(tst.Begin)},
+				end:    keyMatcher{sel: firstGreaterOrEqual(tst.End)},
+				scendf: tx.ascend,
 			}
 
 			var gotValues []string
@@ -175,6 +186,23 @@ func (t *fakeRangeResultTransaction) ascend(pivot internal.Tuple, fun func(keyVa
 	}
 
 	t.bt.Ascend(pivot, func(item interface{}) bool {
+		return fun(item.(keyValue))
+	})
+}
+
+func (t *fakeRangeResultTransaction) descend(pivot internal.Tuple, fun func(keyValue) bool) {
+	if t.bt == nil {
+		t.bt = btree.NewNonConcurrent(btreeBefore)
+		for i, key := range t.Keys {
+			v := []byte(fmt.Sprint(key))
+			if t.Value != nil {
+				v = t.Value(i)
+			}
+			t.bt.Set(keyValue{key, v})
+		}
+	}
+
+	t.bt.Descend(pivot, func(item interface{}) bool {
 		return fun(item.(keyValue))
 	})
 }

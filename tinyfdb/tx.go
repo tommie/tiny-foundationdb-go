@@ -174,10 +174,10 @@ func (t *transaction) Get(key KeyConvertible) FutureByteSlice {
 	return &futureByteSlice{bs: found.Value}
 }
 
-func (t *transaction) GetRange(r Range, _ RangeOptions) RangeResult {
+func (t *transaction) GetRange(r Range, opts RangeOptions) RangeResult {
 	begin, end := r.FDBRangeKeySelectors()
 	t.getReadSeq()
-	return newRangeResult(t, begin.FDBKeySelector(), end.FDBKeySelector())
+	return newRangeResult(t, begin.FDBKeySelector(), end.FDBKeySelector(), opts)
 }
 
 func (t *transaction) getReadSeq() uint64 {
@@ -200,6 +200,22 @@ func (t *transaction) ascend(pivot internal.Tuple, fun func(keyValue) bool) {
 	defer t.d.mu.Unlock()
 
 	t.d.bt.Ascend(pivot, func(item interface{}) bool {
+		kv := item.(keyValue)
+		if kv.Key[len(kv.Key)-1].(uint64) > seq {
+			return true
+		}
+
+		return fun(kv)
+	})
+}
+
+func (t *transaction) descend(pivot internal.Tuple, fun func(keyValue) bool) {
+	seq := t.getReadSeq()
+
+	t.d.mu.Lock()
+	defer t.d.mu.Unlock()
+
+	t.d.bt.Descend(pivot, func(item interface{}) bool {
 		kv := item.(keyValue)
 		if kv.Key[len(kv.Key)-1].(uint64) > seq {
 			return true

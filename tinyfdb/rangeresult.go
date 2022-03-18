@@ -9,16 +9,19 @@ import (
 
 type RangeResult struct {
 	t          rangeResultTx
-	seq        uint64
 	begin, end keySelector
+	opts       RangeOptions
+
+	seq uint64
 }
 
 type rangeResultTx interface {
 	ascend(internal.Tuple, func(keyValue) bool)
+	descend(internal.Tuple, func(keyValue) bool)
 	setTaint(internal.Tuple, taintType)
 }
 
-func newRangeResult(t rangeResultTx, b, e KeySelector) RangeResult {
+func newRangeResult(t rangeResultTx, b, e KeySelector, opts RangeOptions) RangeResult {
 	begin, err := internal.UnpackTuple(b.Key.FDBKey())
 	if err != nil {
 		panic(fmt.Errorf("failed to unpack begin key: %w", err))
@@ -40,29 +43,43 @@ func newRangeResult(t rangeResultTx, b, e KeySelector) RangeResult {
 			OrEqual: e.OrEqual,
 			Offset:  e.Offset,
 		},
+		opts: opts,
 	}
 }
 
 func (rr RangeResult) Iterator() *RangeIterator {
-	return &RangeIterator{
-		rr:   rr,
-		next: keyMatcher{sel: rr.begin},
-		end:  keyMatcher{sel: rr.end},
+	it := &RangeIterator{
+		next:   keyMatcher{sel: rr.begin, inverse: rr.opts.Reverse},
+		end:    keyMatcher{sel: rr.end, inverse: rr.opts.Reverse},
+		scendf: rr.t.ascend,
+		rr:     rr,
 	}
+	if rr.opts.Reverse {
+		it.next, it.end = it.end, it.next
+		it.scendf = rr.t.descend
+	}
+	return it
 }
 
 type RangeIterator struct {
 	kv keyValue
 
-	rr   RangeResult
-	next keyMatcher
-	end  keyMatcher
+	next   keyMatcher
+	end    keyMatcher
+	scendf func(internal.Tuple, func(keyValue) bool)
+	rr     RangeResult
+
+	n int
 }
 
 func (ri *RangeIterator) Advance() bool {
+	if n := ri.rr.opts.Limit; n > 0 && ri.n >= n {
+		return false
+	}
+
 	for {
 		var prev, found *keyValue
-		ri.rr.t.ascend(ri.next.sel.Key, func(kv keyValue) bool {
+		ri.scendf(ri.next.sel.Key, func(kv keyValue) bool {
 			if ri.end.Match(kv.Key[:len(kv.Key)-1]) != noMatch {
 				return false
 			}
@@ -101,14 +118,21 @@ func (ri *RangeIterator) Advance() bool {
 		}
 
 		if found != nil {
-			// Set the seq to max and add an empty field so we don't look
-			// at the same item again. This is like
-			// firstGreaterThan(found.Key[:-1]), but is a bit less verbose
-			// in tests.
-			k := make(internal.Tuple, len(found.Key)+1)
-			copy(k, found.Key)
-			k[len(k)-1] = uint64(math.MaxUint64)
-			ri.next = keyMatcher{sel: firstGreaterOrEqual(k)}
+			if !ri.rr.opts.Reverse {
+				// Set the seq to max and add an empty field so we don't look
+				// at the same item again. This is like
+				// firstGreaterThan(found.Key[:-1]), but is a bit less verbose
+				// in tests.
+				k := make(internal.Tuple, len(found.Key)+1)
+				copy(k, found.Key)
+				k[len(k)-1] = uint64(math.MaxUint64)
+				ri.next = keyMatcher{sel: firstGreaterOrEqual(k)}
+			} else {
+				// For reverse iteration, we simply do
+				// firstGreaterThan, but cheap by setting the offset
+				// to skip the currently found key.
+				ri.next = keyMatcher{sel: keySelector{found.Key, true, 2}, inverse: true}
+			}
 
 			if found.Value == nil {
 				// A tombstone.
@@ -117,6 +141,7 @@ func (ri *RangeIterator) Advance() bool {
 
 			ri.rr.t.setTaint(found.Key[:len(found.Key)-1], readTaint)
 			ri.kv = *found
+			ri.n++
 			return true
 		}
 
@@ -145,6 +170,7 @@ type keyMatcher struct {
 	sel     keySelector
 	i       int
 	hasPrev bool
+	inverse bool
 }
 
 // Match expects a series of non-decreasing keys. After the first
@@ -159,6 +185,9 @@ func (m *keyMatcher) Match(k internal.Tuple) matchResult {
 	} else if btreeBefore(m.sel.Key, k) {
 		// Key is later than selector.
 		cmp = 1
+	}
+	if m.inverse {
+		cmp = -cmp
 	}
 
 	if m.sel.Offset == 0 {
