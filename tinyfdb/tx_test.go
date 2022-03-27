@@ -108,18 +108,19 @@ func TestTransactionCommit(t *testing.T) {
 		_, err = db.Transact(func(tx Transaction) (interface{}, error) {
 			tx.Set(Key(internal.Tuple{"akey"}.Pack()), []byte("avalue"))
 
-			// This will fail to commit because akey is already tainted.
 			_, err := db.Transact(func(tx Transaction) (interface{}, error) {
 				tx.Set(Key(internal.Tuple{"akey"}.Pack()), []byte("anewervalue"))
 				return nil, nil
 			})
-			if !errors.Is(err, RetryableError{}) {
-				t.Fatalf("Transact err: got %#v, want RetryableError", err)
+			if err != nil {
+				t.Fatalf("Transact(one) failed: %v", err)
 			}
 			return nil, nil
 		})
-		if err != nil {
-			t.Fatalf("Transact(two) failed: %v", err)
+		// This will fail to commit because akey was tainted by the
+		// inner transaction.
+		if !errors.Is(err, RetryableError{}) {
+			t.Fatalf("Transact(two) err: got %#v, want RetryableError", err)
 		}
 
 		db.bt.Ascend(nil, func(item interface{}) bool {

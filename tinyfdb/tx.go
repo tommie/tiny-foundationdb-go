@@ -38,8 +38,10 @@ type transaction struct {
 type taintType int
 
 const (
-	readTaint taintType = iota
+	noTaint   taintType = 0
+	readTaint taintType = 1 << iota
 	writeTaint
+	conflictTaint
 )
 
 func newTransaction(d *database) *transaction {
@@ -69,15 +71,27 @@ func (t *transaction) Commit() FutureNil {
 	t.d.mu.Lock()
 	defer t.d.mu.Unlock()
 
-	for key := range t.taints {
+	for key, taint := range t.taints {
+		if taint&conflictTaint == 0 {
+			continue
+		}
+		if taint&^conflictTaint != 0 {
+			if kt, err := internal.UnpackTuple([]byte(key)); err != nil {
+				return &futureNil{err: RetryableError{fmt.Errorf("write race for key %+v", kt)}}
+			}
+			return &futureNil{err: RetryableError{fmt.Errorf("write race for key %+v", []byte(key))}}
+		}
+	}
+
+	for key, taint := range t.taints {
+		if taint&writeTaint == 0 {
+			continue
+		}
 		for t2 := range t.d.txmap {
 			if t2 == t {
 				continue
 			}
-			ok := t2.hasWriteTaintLocked(key)
-			if ok {
-				return &futureNil{err: RetryableError{fmt.Errorf("write race with transaction %p", t2)}}
-			}
+			t2.taints[key] |= conflictTaint
 		}
 	}
 
@@ -97,13 +111,6 @@ func (t *transaction) Commit() FutureNil {
 	delete(t.d.txmap, t)
 
 	return &futureNil{}
-}
-
-// hasWriteTaintLocked checks if the transaction has written to
-// key. t.d.mu must be locked.
-func (t *transaction) hasWriteTaintLocked(key string) bool {
-	typ, ok := t.taints[key]
-	return ok && typ == writeTaint
 }
 
 func (t *transaction) ClearRange(er ExactRange) {
@@ -132,12 +139,18 @@ func (t *transaction) ClearRange(er ExactRange) {
 		k := kv.Key[:len(kv.Key)-1]
 		if kv.Value != nil {
 			t.writes.Set(keyValue{k, nil})
-			t.taints[string(k.Pack())] = writeTaint
+			t.taints[string(k.Pack())] |= writeTaint
 		} else {
 			// A tombstone means we shouldn't taint this. We may have
-			// done so on earlier versions already.
+			// done so on earlier versions already. Conflicts with
+			// other transactions must be preserved.
 			t.writes.Delete(keyValue{k, nil})
-			delete(t.taints, string(k.Pack()))
+			taint := t.taints[string(k.Pack())] & ^(readTaint | writeTaint)
+			if taint == 0 {
+				delete(t.taints, string(k.Pack()))
+			} else {
+				t.taints[string(k.Pack())] = taint
+			}
 		}
 		return true
 	})
@@ -227,7 +240,7 @@ func (t *transaction) descend(pivot internal.Tuple, fun func(keyValue) bool) {
 
 func (t *transaction) Set(key KeyConvertible, value []byte) {
 	t.d.mu.Lock()
-	t.taints[string(key.FDBKey())] = writeTaint
+	t.taints[string(key.FDBKey())] |= writeTaint
 	t.d.mu.Unlock()
 
 	k, err := internal.UnpackTuple(key.FDBKey())
@@ -243,8 +256,5 @@ func (t *transaction) setTaint(key internal.Tuple, typ taintType) {
 	t.d.mu.Lock()
 	defer t.d.mu.Unlock()
 
-	// Allow upgrading readTaint to writeTaint, but no downgrade.
-	if _, ok := t.taints[k]; !ok || typ == writeTaint {
-		t.taints[k] = typ
-	}
+	t.taints[k] |= typ
 }
