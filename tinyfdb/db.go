@@ -3,6 +3,7 @@ package tinyfdb
 import (
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 
 	"github.com/tidwall/btree"
@@ -19,6 +20,11 @@ func MustOpenDefault() Database {
 
 func OpenDefault() (Database, error) {
 	return MustOpenDefault(), nil
+}
+
+// Debug is a tinyfdb extension that allows setting debug parameters.
+func (d Database) Debug() *DBDebug {
+	return (*DBDebug)(d.database)
 }
 
 func (d Database) CreateTransaction() (Transaction, error) {
@@ -55,10 +61,11 @@ func (d Database) Transact(f func(Transaction) (interface{}, error)) (_ interfac
 const maxTransactRetries = 10
 
 type database struct {
-	mu      sync.Mutex
-	bt      *btree.BTree // keyValue
-	txmap   map[*transaction]struct{}
-	prevSeq uint64
+	mu         sync.Mutex
+	bt         *btree.BTree // keyValue
+	txmap      map[*transaction]struct{}
+	prevSeq    uint64
+	raceStacks io.Writer
 }
 
 type keyValue struct {
@@ -68,9 +75,10 @@ type keyValue struct {
 
 func newDatabase() *database {
 	return &database{
-		bt:      btree.NewNonConcurrent(btreeBefore),
-		txmap:   map[*transaction]struct{}{},
-		prevSeq: 1,
+		bt:         btree.NewNonConcurrent(btreeBefore),
+		txmap:      map[*transaction]struct{}{},
+		prevSeq:    1,
+		raceStacks: defaultPrintRaceStacks(),
 	}
 }
 

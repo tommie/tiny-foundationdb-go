@@ -18,7 +18,7 @@ type RangeResult struct {
 type rangeResultTx interface {
 	ascend(internal.Tuple, func(keyValue) bool)
 	descend(internal.Tuple, func(keyValue) bool)
-	setTaint(internal.Tuple, taintType)
+	setTaint([]byte, taintType)
 }
 
 func newRangeResult(t rangeResultTx, b, e KeySelector, opts RangeOptions) RangeResult {
@@ -139,7 +139,7 @@ func (ri *RangeIterator) Advance() bool {
 				continue
 			}
 
-			ri.rr.t.setTaint(found.Key[:len(found.Key)-1], readTaint)
+			ri.rr.t.setTaint(found.Key[:len(found.Key)-1].Pack(), readTaint)
 			ri.kv = *found
 			ri.n++
 			return true

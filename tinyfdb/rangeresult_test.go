@@ -207,8 +207,12 @@ func (t *fakeRangeResultTransaction) descend(pivot internal.Tuple, fun func(keyV
 	})
 }
 
-func (t *fakeRangeResultTransaction) setTaint(key internal.Tuple, typ taintType) {
-	t.GotTaint = append(t.GotTaint, key[:1])
+func (t *fakeRangeResultTransaction) setTaint(key []byte, typ taintType) {
+	kt, err := internal.UnpackTuple(key)
+	if err != nil {
+		panic(err)
+	}
+	t.GotTaint = append(t.GotTaint, kt)
 }
 
 func TestKeyMatcher(t *testing.T) {

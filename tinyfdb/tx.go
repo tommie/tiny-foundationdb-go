@@ -2,6 +2,8 @@ package tinyfdb
 
 import (
 	"fmt"
+	"runtime/debug"
+	"strings"
 	"sync"
 
 	"github.com/tidwall/btree"
@@ -29,10 +31,11 @@ func (t Transaction) Set(key KeyConvertible, value []byte) { t.transaction.Set(k
 type transaction struct {
 	d *database
 
-	mu      sync.Mutex
-	taints  map[string]taintType // Mutex: d.mu
-	writes  *btree.BTree
-	readSeq uint64
+	mu          sync.Mutex
+	taints      map[string]taintType // Mutex: d.mu
+	taintStacks map[string][]string  // Mutex: d.mu
+	writes      *btree.BTree
+	readSeq     uint64
 }
 
 type taintType int
@@ -44,11 +47,27 @@ const (
 	conflictTaint
 )
 
+func (t taintType) String() string {
+	switch t {
+	case noTaint:
+		return "-"
+	case readTaint:
+		return "read"
+	case writeTaint:
+		return "write"
+	case conflictTaint:
+		return "conflict"
+	default:
+		return "<unknown>"
+	}
+}
+
 func newTransaction(d *database) *transaction {
 	return &transaction{
-		d:      d,
-		taints: map[string]taintType{},
-		writes: btree.NewNonConcurrent(btreeBefore),
+		d:           d,
+		taints:      map[string]taintType{},
+		taintStacks: map[string][]string{},
+		writes:      btree.NewNonConcurrent(btreeBefore),
 	}
 }
 
@@ -76,10 +95,19 @@ func (t *transaction) Commit() FutureNil {
 			continue
 		}
 		if taint&^conflictTaint != 0 {
+			var k interface{} = []byte(key)
 			if kt, err := internal.UnpackTuple([]byte(key)); err == nil {
-				return &futureNil{err: RetryableError{fmt.Errorf("write race for key %+v", kt)}}
+				k = kt
 			}
-			return &futureNil{err: RetryableError{fmt.Errorf("write race for key %+v", []byte(key))}}
+
+			if t.d.raceStacks != nil {
+				fmt.Fprintf(t.d.raceStacks, "*** TinyFDB Races for key %+v ***\n", k)
+				for _, stack := range t.taintStacks[key] {
+					fmt.Fprintln(t.d.raceStacks, "Race", stack)
+				}
+			}
+
+			return &futureNil{err: RetryableError{fmt.Errorf("write race for key %+v", k)}}
 		}
 	}
 
@@ -92,6 +120,9 @@ func (t *transaction) Commit() FutureNil {
 				continue
 			}
 			t2.taints[key] |= conflictTaint
+			if t.d.raceStacks != nil {
+				t2.taintStacks[key] = append(t2.taintStacks[key], t.taintStacks[key]...)
+			}
 		}
 	}
 
@@ -137,19 +168,20 @@ func (t *transaction) ClearRange(er ExactRange) {
 			return false
 		}
 		k := kv.Key[:len(kv.Key)-1]
+		kbs := k.Pack()
 		if kv.Value != nil {
 			t.writes.Set(keyValue{k, nil})
-			t.taints[string(k.Pack())] |= writeTaint
+			t.setTaintLocked(kbs, writeTaint, 0)
 		} else {
 			// A tombstone means we shouldn't taint this. We may have
 			// done so on earlier versions already. Conflicts with
 			// other transactions must be preserved.
 			t.writes.Delete(keyValue{k, nil})
-			taint := t.taints[string(k.Pack())] & ^(readTaint | writeTaint)
+			taint := t.taints[string(kbs)] & ^(readTaint | writeTaint)
 			if taint == 0 {
-				delete(t.taints, string(k.Pack()))
+				delete(t.taints, string(kbs))
 			} else {
-				t.taints[string(k.Pack())] = taint
+				t.taints[string(kbs)] = taint
 			}
 		}
 		return true
@@ -183,7 +215,7 @@ func (t *transaction) Get(key KeyConvertible) FutureByteSlice {
 	if found == nil {
 		return &futureByteSlice{}
 	}
-	t.setTaint(found.Key, readTaint)
+	t.setTaint(found.Key.Pack(), readTaint)
 	return &futureByteSlice{bs: found.Value}
 }
 
@@ -239,22 +271,46 @@ func (t *transaction) descend(pivot internal.Tuple, fun func(keyValue) bool) {
 }
 
 func (t *transaction) Set(key KeyConvertible, value []byte) {
-	t.d.mu.Lock()
-	t.taints[string(key.FDBKey())] |= writeTaint
-	t.d.mu.Unlock()
+	k := key.FDBKey()
+	t.setTaint(k, writeTaint)
 
-	k, err := internal.UnpackTuple(key.FDBKey())
+	kt, err := internal.UnpackTuple(k)
 	if err != nil {
 		panic(err)
 	}
-	t.writes.Set(keyValue{k, value})
+	t.writes.Set(keyValue{kt, value})
 }
 
-func (t *transaction) setTaint(key internal.Tuple, typ taintType) {
-	k := string(key.Pack())
-
+func (t *transaction) setTaint(key []byte, typ taintType) {
 	t.d.mu.Lock()
-	defer t.d.mu.Unlock()
+	t.setTaintLocked(key, typ, 1)
+	t.d.mu.Unlock()
+}
 
-	t.taints[k] |= typ
+func (t *transaction) setTaintLocked(key []byte, typ taintType, stackSkip int) {
+	sk := string(key)
+
+	t.taints[sk] |= typ
+
+	if t.d.raceStacks != nil {
+		t.taintStacks[sk] = append(t.taintStacks[sk], fmt.Sprintf("%s in %s", typ & ^conflictTaint, stackTrace(1+stackSkip)))
+	}
+}
+
+func stackTrace(skip int) string {
+	// It would be nice to use runtime.Callers here, which allows us
+	// to skip frames. But we'd still like to have the goroutine
+	// identifier.
+	s := strings.TrimSpace(string(debug.Stack()))
+	var hdr string
+	for i := 0; s != "" && i < 1+2*(2+skip); i++ {
+		l, tail, _ := strings.Cut(s, "\n")
+		s = tail
+
+		if i == 0 {
+			hdr = l
+		}
+	}
+
+	return hdr + "\n" + s
 }
