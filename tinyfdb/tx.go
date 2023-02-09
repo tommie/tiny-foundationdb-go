@@ -76,7 +76,7 @@ func (t *transaction) Commit() FutureNil {
 			continue
 		}
 		if taint&^conflictTaint != 0 {
-			if kt, err := internal.UnpackTuple([]byte(key)); err != nil {
+			if kt, err := internal.UnpackTuple([]byte(key)); err == nil {
 				return &futureNil{err: RetryableError{fmt.Errorf("write race for key %+v", kt)}}
 			}
 			return &futureNil{err: RetryableError{fmt.Errorf("write race for key %+v", []byte(key))}}
